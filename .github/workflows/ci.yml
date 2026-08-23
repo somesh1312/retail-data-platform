@@ -1,39 +1,45 @@
-name: Retail Data Platform CI
+name: CI
 
 
 on:
-
-  push:
-
-    branches:
-      - main
 
   pull_request:
 
     branches:
       - main
 
+  push:
+
+    branches:
+      - main
+
+
+permissions:
+
+  contents: read
+
 
 jobs:
 
   python-tests:
 
+    name: Python Tests
+
     runs-on: ubuntu-latest
+
 
     steps:
 
       - name: Checkout repository
-
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
 
       - name: Set up Python
-
         uses: actions/setup-python@v5
 
         with:
-
           python-version: "3.11"
+          cache: "pip"
 
 
       - name: Install dependencies
@@ -47,7 +53,7 @@ jobs:
             -r requirements.txt
 
 
-      - name: Compile Python files
+      - name: Compile Python
 
         run: |
 
@@ -64,23 +70,72 @@ jobs:
           pytest -v
 
 
-      - name: Validate dbt project
 
-        run: |
+  dbt-validation:
 
-          cd retail_analytics
-
-          dbt parse
-
-  docker-build:
+    name: dbt Validation
 
     runs-on: ubuntu-latest
+
 
     steps:
 
       - name: Checkout repository
+        uses: actions/checkout@v6
 
-        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+
+      - name: Install dependencies
+
+        run: |
+
+          python -m pip install \
+            --upgrade pip
+
+          pip install \
+            -r requirements.txt
+
+
+      - name: Validate dbt project
+
+        env:
+
+          POSTGRES_HOST: localhost
+
+          POSTGRES_PORT: "5432"
+
+          POSTGRES_DB: retail_dw
+
+          POSTGRES_USER: retail
+
+          POSTGRES_PASSWORD: retail
+
+        run: |
+
+          dbt parse \
+            --project-dir retail_analytics \
+            --profiles-dir retail_analytics
+
+
+
+  docker-build:
+
+    name: Docker Build
+
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
 
       - name: Build Airflow image
