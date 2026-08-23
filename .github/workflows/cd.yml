@@ -1,0 +1,138 @@
+name: CD
+
+
+on:
+
+  push:
+
+    branches:
+
+      - main
+
+
+permissions:
+
+  contents: read
+
+  packages: write
+
+
+env:
+
+  REGISTRY:
+    ghcr.io
+
+  IMAGE_NAME:
+    ${{ github.repository }}
+
+
+jobs:
+
+  build-and-publish:
+
+    name: Build and Publish Image
+
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Checkout repository
+
+        uses: actions/checkout@v6
+
+
+      - name: Log in to GitHub Container Registry
+
+        uses: docker/login-action@v3
+
+        with:
+
+          registry:
+            ${{ env.REGISTRY }}
+
+          username:
+            ${{ github.actor }}
+
+          password:
+            ${{ secrets.GITHUB_TOKEN }}
+
+
+      - name: Build and push Airflow image
+
+        uses: docker/build-push-action@v6
+
+        with:
+
+          context: .
+
+          file:
+            ./Dockerfile.airflow
+
+          push: true
+
+          tags: |
+
+            ghcr.io/${{ github.repository }}:latest
+
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+
+
+  deploy:
+
+    name: Deploy to EC2
+
+    runs-on: ubuntu-latest
+
+    needs:
+
+      - build-and-publish
+
+
+    steps:
+
+      - name: Deploy over SSH
+
+        uses: appleboy/ssh-action@v1
+
+        with:
+
+          host:
+            ${{ secrets.EC2_HOST }}
+
+          username:
+            ${{ secrets.EC2_USER }}
+
+          key:
+            ${{ secrets.EC2_SSH_KEY }}
+
+          script: |
+
+            cd ~/retail-data-platform
+
+            git fetch origin
+
+            git reset --hard origin/main
+
+            echo "${{ secrets.GITHUB_TOKEN }}" \
+              | docker login ghcr.io \
+                  -u "${{ github.actor }}" \
+                  --password-stdin
+
+            export $(grep -v '^#' .env.production | xargs)
+
+            docker compose \
+              --env-file .env.production \
+              -f docker-compose.prod.yml \
+              pull
+
+            docker compose \
+              --env-file .env.production \
+              -f docker-compose.prod.yml \
+              up -d
+
+            docker compose \
+              --env-file .env.production \
+              -f docker-compose.prod.yml \
+              ps
