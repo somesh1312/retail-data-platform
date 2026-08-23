@@ -1,0 +1,10 @@
+pandas
+faker
+sqlalchemy
+psycopg2-binary
+requests
+fastapi
+uvicorn
+python-dotenv
+pytest
+dbt-postgres

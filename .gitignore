@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Environment
+.env
+
+# macOS
+.DS_Store
+
+# Airflow
+airflow/logs/*
+airflow/*.db
+
+# dbt
+retail_analytics/target/
+retail_analytics/logs/
+retail_analytics/dbt_packages/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+
+# Failed local data
+failed/
+
+# Archive files
+archive/
+
+# SQLite local source
+source_db/*.db

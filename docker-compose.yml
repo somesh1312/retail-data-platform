@@ -1,0 +1,405 @@
+services:
+
+  # ======================================================
+  # RETAIL DATA WAREHOUSE
+  # ======================================================
+
+  warehouse:
+
+    image: postgres:16
+
+    container_name: retail-warehouse
+
+    environment:
+
+      POSTGRES_USER: retail
+      POSTGRES_PASSWORD: retail
+      POSTGRES_DB: retail_dw
+
+    ports:
+
+      - "5432:5432"
+
+    volumes:
+
+      - retail_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U retail -d retail_dw"
+        ]
+
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  # ======================================================
+  # AIRFLOW METADATA DATABASE
+  # ======================================================
+
+  airflow-db:
+
+    image: postgres:16
+
+    container_name: airflow-db
+
+    environment:
+
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+
+    volumes:
+
+      - airflow_metadata_data:/var/lib/postgresql/data
+
+    healthcheck:
+
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U airflow -d airflow"
+        ]
+
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  # ======================================================
+  # AIRFLOW INITIALIZATION
+  # ======================================================
+
+  airflow-init:
+
+    build:
+
+      context: .
+      dockerfile: Dockerfile.airflow
+
+    container_name: airflow-init
+
+    depends_on:
+
+      airflow-db:
+        condition: service_healthy
+
+    environment:
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:
+        postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+
+      AIRFLOW__CORE__EXECUTOR:
+        LocalExecutor
+
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL:
+        http://airflow-api-server:8080/execution/
+
+      AIRFLOW__CORE__LOAD_EXAMPLES:
+        "false"
+
+      AIRFLOW__CORE__PARALLELISM:
+        "8"
+
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+        "4"
+
+      AIRFLOW__API_AUTH__JWT_SECRET:
+        ${AIRFLOW_JWT_SECRET}
+
+    volumes:
+
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - .:/opt/retail-data-platform
+
+    command:
+
+      - bash
+      - -c
+      - |
+        airflow db migrate
+
+
+  # ======================================================
+  # AIRFLOW API / UI
+  # ======================================================
+
+  airflow-api-server:
+
+    build:
+
+      context: .
+      dockerfile: Dockerfile.airflow
+
+    container_name: airflow-api-server
+
+    depends_on:
+
+      airflow-db:
+        condition: service_healthy
+
+      airflow-init:
+        condition: service_completed_successfully
+
+      warehouse:
+        condition: service_healthy
+
+    environment:
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:
+        postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+
+      AIRFLOW__CORE__EXECUTOR:
+        LocalExecutor
+
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL:
+        http://airflow-api-server:8080/execution/
+
+      AIRFLOW__CORE__LOAD_EXAMPLES:
+        "false"
+
+      AIRFLOW__CORE__PARALLELISM:
+        "8"
+
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+        "4"
+
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS:
+        "true"
+
+      AIRFLOW__API_AUTH__JWT_SECRET:
+        ${AIRFLOW_JWT_SECRET}
+
+      POSTGRES_HOST: warehouse
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: retail_dw
+      POSTGRES_USER: retail
+      POSTGRES_PASSWORD: retail
+
+      PYTHONPATH:
+        /opt/retail-data-platform
+
+    ports:
+
+      - "8080:8080"
+
+    volumes:
+
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - .:/opt/retail-data-platform
+
+    command:
+      api-server
+
+
+  # ======================================================
+  # AIRFLOW SCHEDULER
+  # ======================================================
+
+  airflow-scheduler:
+
+    build:
+
+      context: .
+      dockerfile: Dockerfile.airflow
+
+    container_name: airflow-scheduler
+
+    depends_on:
+
+      airflow-db:
+        condition: service_healthy
+
+      airflow-init:
+        condition: service_completed_successfully
+
+      warehouse:
+        condition: service_healthy
+
+      airflow-api-server:
+        condition: service_started
+
+    environment:
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:
+        postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+
+      AIRFLOW__CORE__EXECUTOR:
+        LocalExecutor
+
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL:
+        http://airflow-api-server:8080/execution/
+
+      AIRFLOW__CORE__LOAD_EXAMPLES:
+        "false"
+
+      AIRFLOW__CORE__PARALLELISM:
+        "8"
+
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+        "4"
+
+      AIRFLOW__API_AUTH__JWT_SECRET:
+        ${AIRFLOW_JWT_SECRET}
+
+      POSTGRES_HOST: warehouse
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: retail_dw
+      POSTGRES_USER: retail
+      POSTGRES_PASSWORD: retail
+
+      PYTHONPATH:
+        /opt/retail-data-platform
+
+    volumes:
+
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - .:/opt/retail-data-platform
+
+    command:
+      scheduler
+
+
+  # ======================================================
+  # AIRFLOW DAG PROCESSOR
+  # ======================================================
+
+  airflow-dag-processor:
+
+    build:
+
+      context: .
+      dockerfile: Dockerfile.airflow
+
+    container_name: airflow-dag-processor
+
+    depends_on:
+
+      airflow-db:
+        condition: service_healthy
+
+      airflow-init:
+        condition: service_completed_successfully
+
+      airflow-api-server:
+        condition: service_started
+
+    environment:
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:
+        postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+
+      AIRFLOW__CORE__EXECUTOR:
+        LocalExecutor
+
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL:
+        http://airflow-api-server:8080/execution/
+
+      AIRFLOW__CORE__LOAD_EXAMPLES:
+        "false"
+
+      AIRFLOW__CORE__PARALLELISM:
+        "8"
+
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+        "4"
+
+      AIRFLOW__API_AUTH__JWT_SECRET:
+        ${AIRFLOW_JWT_SECRET}
+
+      PYTHONPATH:
+        /opt/retail-data-platform
+
+    volumes:
+
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - .:/opt/retail-data-platform
+
+    command:
+      dag-processor
+
+
+  # ======================================================
+  # AIRFLOW TRIGGERER
+  # ======================================================
+
+  airflow-triggerer:
+
+    build:
+
+      context: .
+      dockerfile: Dockerfile.airflow
+
+    container_name: airflow-triggerer
+
+    depends_on:
+
+      airflow-db:
+        condition: service_healthy
+
+      airflow-init:
+        condition: service_completed_successfully
+
+      airflow-api-server:
+        condition: service_started
+
+    environment:
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:
+        postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+
+      AIRFLOW__CORE__EXECUTOR:
+        LocalExecutor
+
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL:
+        http://airflow-api-server:8080/execution/
+
+      AIRFLOW__CORE__LOAD_EXAMPLES:
+        "false"
+
+      AIRFLOW__CORE__PARALLELISM:
+        "8"
+
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+        "4"
+
+      AIRFLOW__API_AUTH__JWT_SECRET:
+        ${AIRFLOW_JWT_SECRET}
+
+      PYTHONPATH:
+        /opt/retail-data-platform
+
+    volumes:
+
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - .:/opt/retail-data-platform
+
+    command:
+      triggerer
+
+
+# ========================================================
+# VOLUMES
+# ========================================================
+
+volumes:
+
+  retail_postgres_data:
+    external: true
+    name: retail-data-platform_retail_postgres_data
+
+  airflow_metadata_data:
