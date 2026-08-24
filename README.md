@@ -1,567 +1,471 @@
 # Retail Data Platform
 
-A production-style batch data platform demonstrating how daily retail data can be ingested from heterogeneous sources, orchestrated through Apache Airflow, transformed and tested with dbt, containerized with Docker, and automatically deployed to AWS through CI/CD.
+**Python · SQL · dbt · Apache Airflow · PostgreSQL · Docker · GitHub Actions · AWS EC2**
 
-The project focuses not only on moving data, but on the operational concerns that make pipelines reliable: incremental processing, idempotency, data quality, orchestration, automated testing, reproducible environments, and deployment automation.
-
----
-
-## Architecture
-
-```text
-                     RETAIL SOURCE SYSTEMS
-                              │
-          ┌───────────────────┼───────────────────┐
-          │                   │                   │
-      Orders CSV         Product JSON/API     Customer DB
-          │                   │                   │
-          └───────────────────┼───────────────────┘
-                              │
-                    Python Ingestion Layer
-                              │
-                              ▼
-                       PostgreSQL Warehouse
-                              │
-                 ┌────────────┴────────────┐
-                 │                         │
-               RAW                       dbt
-                 │                         │
-                 ▼                         ▼
-              SILVER                  Transform
-                 │                         │
-                 └────────────┬────────────┘
-                              ▼
-                             GOLD
-                              │
-              ┌───────────────┼────────────────┐
-              │               │                │
-        dim_customers    dim_products      fct_orders
-                                              │
-                              ┌───────────────┴──────────────┐
-                              ▼                              ▼
-                     mart_daily_sales            mart_inventory_health
-```
-
-### Orchestration
-
-```text
-find_order_file
-       │
-       ▼
-ingest_orders
-       │
-       ▼
-run_dbt
-       │
-       ▼
-archive_order_file
-```
-
-Apache Airflow coordinates the complete daily workflow and ensures downstream processing only occurs after upstream dependencies succeed.
+A production-style retail data platform that ingests heterogeneous operational data, processes daily order batches incrementally, transforms warehouse data through dbt, enforces data-quality gates, orchestrates workflows with Apache Airflow, and ships through an automated CI/CD pipeline — deployed to AWS EC2.
 
 ---
 
-## Engineering Goals
+## Why This Exists
 
-This project was designed around several production data-engineering concerns:
+A basic data pipeline can move data from A to B. This project is deliberately built around the harder questions that surface *after* an ETL pipeline works once:
 
-- Multi-source ingestion
-- Incremental data processing
-- Idempotent pipeline execution
-- Automated data quality testing
-- Layered warehouse modeling
-- Workflow orchestration
-- Failure-safe file handling
-- Containerized runtime environments
-- Continuous integration
-- Automated deployment
-- Reproducible infrastructure
+- What happens when the same batch arrives twice?
+- How do we avoid rebuilding historical data every day?
+- What happens when a transformation violates a business rule?
+- When should a source file be considered "successfully processed"?
+- How do application code, orchestration, containers, and databases move together between environments?
+- How does a code change get validated before it reaches a running environment?
 
----
-
-## Technology Stack
-
-| Layer | Technology |
-|---|---|
-| Language | Python, SQL |
-| Transformation | dbt |
-| Orchestration | Apache Airflow |
-| Warehouse | PostgreSQL |
-| Containerization | Docker / Docker Compose |
-| CI/CD | GitHub Actions |
-| Cloud Runtime | AWS EC2 |
-| Container Registry | GitHub Container Registry |
-| Source Control | Git / GitHub |
-
----
-
-## Data Sources
-
-The platform intentionally uses different source formats to simulate a heterogeneous business environment.
-
-### Orders
-
-Daily order batches arrive as CSV files.
-
-```text
-landing/orders/
-└── orders_YYYY-MM-DD.csv
-```
-
-### Products
-
-Product information is ingested from a JSON/API-style source.
-
-### Customers
-
-Customer information originates from a separate operational database.
-
-### Inventory
-
-Inventory data is independently ingested and joined with product information downstream.
-
-The different source systems converge in PostgreSQL before dbt applies standardized transformation and modeling logic.
-
----
-
-## Warehouse Layers
-
-### Raw
-
-Source-aligned data loaded with minimal transformation.
-
-```text
-raw.customers
-raw.inventory
-raw.orders
-raw.products
-```
-
-### Silver
-
-Cleaned and standardized dbt staging models.
-
-```text
-silver.stg_customers
-silver.stg_inventory
-silver.stg_orders
-silver.stg_products
-```
-
-### Gold
-
-Business-ready analytical models.
-
-```text
-gold.dim_customers
-gold.dim_products
-gold.fct_orders
-gold.mart_daily_sales
-gold.mart_inventory_health
-```
-
-This separation keeps ingestion concerns independent from transformation and analytical modeling.
-
----
-
-## Incremental Processing
-
-`fct_orders` is implemented as an incremental dbt model.
-
-Rather than rebuilding the complete historical fact table on every execution, the pipeline processes new data incrementally while maintaining order-level uniqueness.
-
-This becomes increasingly important as historical order volume grows.
-
----
-
-## Idempotent Ingestion
-
-Daily ingestion protects the warehouse from duplicate processing.
-
-Before loading an incoming order file, the ingestion layer determines whether that file has already completed successfully.
-
-Example:
-
-```text
-Incoming file: orders_2026-08-23.csv
-File has already been successfully processed.
-Skipping to protect against duplicate loading.
-```
-
-This allows pipeline retries and accidental file redelivery without duplicating previously processed data.
-
----
-
-## Data Quality
-
-Data quality checks are executed as part of the dbt build.
-
-Tests validate properties including:
-
-- Primary-key uniqueness
-- Required/non-null fields
-- Referential integrity
-- Positive order amounts
-- Model assumptions
-
-Example successful execution:
-
-```text
-PASS=23
-WARN=0
-ERROR=0
-SKIP=0
-TOTAL=23
-```
-
-A failed quality check causes the transformation stage to fail rather than silently publishing invalid analytical data.
-
----
-
-## Airflow Pipeline
-
-Apache Airflow orchestrates daily processing.
-
-```text
-Incoming order file
-        │
-        ▼
-Find eligible file
-        │
-        ▼
-Ingest into PostgreSQL
-        │
-        ▼
-Execute dbt build
-        │
-        ▼
-Run transformations + tests
-        │
-        ▼
-Archive successfully processed file
-```
-
-Files are archived only after successful downstream processing.
-
-This prevents an unsuccessful batch from being incorrectly treated as completed.
-
----
-
-## CI Pipeline
-
-Pull requests and code changes are validated automatically through GitHub Actions.
-
-The CI workflow performs:
-
-```text
-Code Change
-    │
-    ├── Python Tests
-    │
-    ├── dbt Validation
-    │
-    └── Docker Build
-```
-
-Changes must pass automated validation before they are considered deployable.
-
----
-
-## Continuous Deployment
-
-Changes merged to `main` trigger the deployment workflow.
-
-```text
-Merge to main
-      │
-      ▼
-GitHub Actions
-      │
-      ▼
-Build Docker Image
-      │
-      ▼
-Publish to GHCR
-      │
-      ▼
-Deploy to AWS EC2
-      │
-      ▼
-Docker Compose
-      │
-      ├── Airflow API Server
-      ├── Airflow Scheduler
-      ├── Airflow DAG Processor
-      ├── Airflow Triggerer
-      ├── Airflow Metadata PostgreSQL
-      └── Retail Warehouse PostgreSQL
-```
-
-This creates a repeatable deployment process instead of relying on manual server configuration after every code change.
-
----
-
-## Repository Structure
-
-```text
-retail-data-platform/
-│
-├── .github/
-│   └── workflows/
-│       ├── ci.yml
-│       └── cd.yml
-│
-├── airflow/
-│   └── dags/
-│       └── retail_daily_pipeline.py
-│
-├── ingestion/
-│   ├── database.py
-│   ├── ingest_customers.py
-│   ├── ingest_daily_orders.py
-│   ├── ingest_inventory.py
-│   ├── ingest_orders.py
-│   ├── ingest_products.py
-│   └── run_ingestion.py
-│
-├── retail_analytics/
-│   ├── models/
-│   │   ├── staging/
-│   │   └── marts/
-│   ├── tests/
-│   ├── macros/
-│   └── dbt_project.yml
-│
-├── landing/
-│   └── orders/
-│
-├── archive/
-│   └── orders/
-│
-├── failed/
-│   └── orders/
-│
-├── product_api/
-├── scripts/
-├── tests/
-│
-├── Dockerfile.airflow
-├── docker-compose.yml
-├── docker-compose.prod.yml
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Local Development
-
-### 1. Clone the repository
-
-```bash
-git clone <repository-url>
-cd retail-data-platform
-```
-
-### 2. Create environment configuration
-
-```bash
-cp .env.example .env
-```
-
-Update the required local environment variables.
-
-Never commit `.env` or production credentials.
-
-### 3. Start the platform
-
-```bash
-docker compose up -d --build
-```
-
-### 4. Verify containers
-
-```bash
-docker compose ps
-```
-
-### 5. Access Airflow
-
-Open the locally configured Airflow port in your browser and trigger:
-
-```text
-retail_daily_pipeline
-```
-
----
-
-## Running dbt
-
-Validate connectivity:
-
-```bash
-dbt debug \
-  --project-dir retail_analytics \
-  --profiles-dir retail_analytics
-```
-
-Build models and execute tests:
-
-```bash
-dbt build \
-  --project-dir retail_analytics \
-  --profiles-dir retail_analytics
-```
-
-Generate documentation:
-
-```bash
-dbt docs generate \
-  --project-dir retail_analytics \
-  --profiles-dir retail_analytics
-```
-
-Serve documentation locally:
-
-```bash
-dbt docs serve \
-  --project-dir retail_analytics \
-  --profiles-dir retail_analytics
-```
-
----
-
-## Example Daily Lifecycle
-
-A new file arrives:
-
-```text
-landing/orders/orders_2026-08-24.csv
-```
-
-Airflow detects the batch and initiates ingestion.
-
-Python loads eligible records into the raw warehouse.
-
-dbt then transforms the data through:
-
-```text
-raw
- ↓
-silver
- ↓
-gold
-```
-
-Tests validate the resulting models.
-
-After successful completion:
-
-```text
-landing/orders/orders_2026-08-24.csv
-```
-
-is moved to:
-
-```text
-archive/orders/orders_2026-08-24.csv
-```
-
-If the same completed batch is submitted again, duplicate-processing protection prevents it from being loaded twice.
-
----
-
-## Reliability Features
-
-The project deliberately includes operational behaviors commonly required in production pipelines.
-
-**Idempotency**
-
-Previously completed batches are not loaded twice.
-
-**Incremental processing**
-
-Historical fact data does not need to be rebuilt for every daily batch.
-
-**Data quality gates**
-
-Invalid data can prevent downstream analytical models from being published.
-
-**Dependency management**
-
-Airflow controls task execution order.
-
-**Failure-safe archival**
-
-Source files are archived only after successful processing.
-
-**Reproducible environments**
-
-Docker ensures development and deployment use consistent runtime dependencies.
-
-**Automated validation**
-
-GitHub Actions validates code before deployment.
-
-**Automated delivery**
-
-Successful main-branch changes can be built and deployed without manually rebuilding the production environment.
+Every architectural choice in this repository traces back to at least one of these questions.
 
 ---
 
 ## What This Project Demonstrates
 
-This repository is intentionally focused on the complete lifecycle of a data pipeline rather than only SQL transformation.
+> *A pipeline is not complete when the happy path works. It is complete when retries are safe, failures are visible, data quality is enforced, and the runtime can be reproduced outside the developer's machine.*
 
-It demonstrates how I approach:
-
-- designing ingestion workflows
-- integrating heterogeneous data sources
-- modeling analytical datasets
-- implementing data-quality controls
-- designing pipelines for safe retries
-- orchestrating dependencies
-- troubleshooting containerized data services
-- automating validation
-- deploying reproducible environments
-- operating a data pipeline beyond local development
-
----
-
-## Future Improvements
-
-Potential production-scale extensions include:
-
-- S3-based landing zone
-- Amazon RDS or managed cloud warehouse
-- Secrets Manager / Parameter Store
-- Terraform-managed infrastructure
-- centralized observability and alerting
-- data freshness monitoring
-- dead-letter/quarantine workflows
-- remote Airflow logging
-- larger-volume performance testing
-- distributed Airflow execution
-
-These are intentionally treated as scaling improvements rather than requirements for the current single-node implementation.
+| Capability | What I Built |
+|---|---|
+| **Source Integration** | Four heterogeneous sources (CSV batch, JSON/API, relational DB, inventory feed) converging through a unified Python ingestion layer |
+| **Idempotent Ingestion** | Processing-history tracking that prevents duplicate loads on retries, reruns, or accidental redelivery |
+| **Incremental Modeling** | dbt fact model that merges new/changed orders without rebuilding history |
+| **Data Quality Gates** | 23 dbt tests (uniqueness, not-null, accepted values, referential integrity, business rules) that block bad data from reaching analytical models |
+| **Warehouse Design** | Three-layer architecture (RAW → SILVER → GOLD) separating ingestion, standardization, and business logic |
+| **Orchestration** | Airflow DAG with explicit task dependencies and clear failure boundaries |
+| **CI/CD** | GitHub Actions pipeline — tests, dbt validation, and Docker build on PR; automated image build and deployment to AWS EC2 on merge |
+| **Containerization** | Reproducible Docker runtime with separate development and production Compose configurations |
+| **Cloud Deployment** | Full stack deployed to AWS EC2 via automated CD pipeline with scoped IAM permissions |
 
 ---
 
-## Status
+## System Architecture
 
-```text
-Python ingestion       ✅
-Multi-source loading   ✅
-Incremental dbt        ✅
-Idempotent ingestion   ✅
-dbt transformations    ✅
-dbt tests              ✅
-Airflow orchestration  ✅
-Docker                 ✅
-CI                     ✅
-CD                     ✅
-AWS deployment         ✅
 ```
+                         RETAIL SOURCE SYSTEMS
+           Orders CSV        Product Catalog       Customer DB
+               │                JSON / API              │
+               │                    │                   │
+               └────────────────────┼───────────────────┘
+                                    │
+                                    ▼
+                           Python Ingestion
+                          (validation + idempotency)
+                                    │
+                                    ▼
+                          PostgreSQL Warehouse
+                                    │
+                    ┌───────────────┴───────────────┐
+                    │                               │
+                   RAW                             dbt
+                    │                               │
+                    ▼                               ▼
+                 SILVER ───────────────────────►   GOLD
+                                                    │
+                                 ┌──────────────────┼─────────────────┐
+                                 │                  │                 │
+                          dim_customers       dim_products       fct_orders
+                                                                     │
+                                               ┌─────────────────────┴───────────────┐
+                                               │                                     │
+                                      mart_daily_sales                  mart_inventory_health
+```
+
+---
+
+## End-to-End Daily Lifecycle
+
+A daily orders file arrives in `landing/orders/orders_YYYY-MM-DD.csv`. Airflow then coordinates the full processing lifecycle:
+
+```
+find_order_file ──► ingest_orders ──► run_dbt ──► archive_order_file
+```
+
+**Each step creates a clear failure boundary.** If `run_dbt` fails:
+
+| Task | Status |
+|---|---|
+| find_order_file | ✅ |
+| ingest_orders | ✅ |
+| run_dbt | ❌ |
+| archive_order_file | ⏸ |
+
+The source batch remains available for investigation instead of being silently treated as processed. A file is archived **only** after downstream transformation and validation succeed.
+
+![Airflow DAG Success](docs/images/airflow-success.png)
+
+---
+
+## Multi-Source Ingestion
+
+The platform intentionally combines different source types rather than assuming every upstream system delivers identical files.
+
+| Source | Input Style | Purpose |
+|---|---|---|
+| Orders | Daily CSV batch | Transactional sales |
+| Customers | Separate operational database | Customer master data |
+| Products | JSON / API-style source | Product catalog |
+| Inventory | Independent inventory feed | Stock availability |
+
+```
+Orders CSV ───────────────┐
+                          │
+Product JSON / API ───────┤
+                          ├──► Python ingestion ──► PostgreSQL
+Customer Database ────────┤
+                          │
+Inventory Feed ───────────┘
+```
+
+Keeping ingestion separate from analytical modeling allows each source to evolve independently while dbt provides a standardized downstream transformation layer.
+
+---
+
+## Idempotent Ingestion
+
+A pipeline retry should not create duplicate business data. The ingestion layer records successfully processed batches and checks processing history before loading.
+
+```
+Run #1:  5,000 existing + 200 new orders  →  5,200 ✅
+Run #2:  Same file arrives again          →  5,200 ✅  (not 5,400)
+```
+
+```
+Incoming file: orders_2026-08-23.csv
+File has already been successfully processed.
+Skipping to protect against duplicate loading.
+```
+
+This protects against Airflow retries, manual reruns, accidental file redelivery, and operators triggering the same batch twice.
+
+![Idempotent Ingestion](docs/images/idempotent-ingestion.png)
+
+---
+
+## Warehouse Design
+
+The warehouse follows a three-layer modeling approach. Each layer has a distinct responsibility.
+
+### RAW — Source Preservation
+
+Source-aligned records with minimal transformation. RAW preserves the boundary between ingestion and analytics logic.
+
+`raw.customers` · `raw.inventory` · `raw.orders` · `raw.products`
+
+### SILVER — Standardization & Cleaning
+
+dbt staging models handling type normalization, field standardization, basic cleaning, consistent naming, and source-level validation.
+
+`silver.stg_customers` · `silver.stg_inventory` · `silver.stg_orders` · `silver.stg_products`
+
+### GOLD — Business-Facing Models
+
+Analytical models designed for downstream consumption rather than mirroring operational source structures.
+
+`gold.dim_customers` · `gold.dim_products` · `gold.fct_orders` · `gold.mart_daily_sales` · `gold.mart_inventory_health`
+
+The goal is to move consumers away from raw operational structures and toward stable analytical contracts.
+
+---
+
+## Incremental Processing
+
+`fct_orders` is implemented as an incremental dbt model. The pipeline does not rebuild the entire historical order fact table every time new sales arrive.
+
+```
+Existing warehouse:  5,000 historical orders
+                          │
+                          │  + 250 new/changed orders
+                          ▼
+                  Incremental merge (order_id as key)
+                          │
+                          ▼
+                  Updated fact table
+```
+
+Existing orders are updated in place while genuinely new orders are inserted. This becomes increasingly important as historical volume grows.
+
+---
+
+## Data Quality as a Pipeline Gate
+
+dbt tests are part of the pipeline, not an afterthought. A failed quality assertion causes the transformation stage to fail instead of silently publishing invalid analytical data.
+
+**Validated assumptions include:** primary-key uniqueness, required/non-null fields, accepted value ranges, referential relationships, positive order amounts, and model-level business rules.
+
+**Current build status:**
+
+```
+PASS=23  |  WARN=0  |  ERROR=0  |  SKIP=0  |  TOTAL=23
+```
+
+![dbt Build Success](docs/images/dbt-build-success.png)
+
+---
+
+## dbt Lineage
+
+The dbt project makes lineage explicit from sources through staging to analytical models:
+
+```
+Source → Staging → Fact / Dimensions → Business Marts
+```
+
+![dbt Lineage](docs/images/dbt-lineage.png)
+
+---
+
+## Analytical Models
+
+The Gold layer currently exposes:
+
+| Model | Purpose |
+|---|---|
+| **dim_customers** | Reusable customer attributes for analytical joins |
+| **dim_products** | Standardized product and category information |
+| **fct_orders** | Order-grain transactional fact (primary incremental model) |
+| **mart_daily_sales** | Daily aggregated business metrics for sales analysis |
+| **mart_inventory_health** | Stock condition analysis across products |
+
+---
+
+## CI — Validate Before Merge
+
+GitHub Actions provides automated Continuous Integration on every pull request.
+
+```
+Feature Branch
+      │
+      ▼
+Pull Request
+      │
+      ├────────► Python dependency installation & unit tests
+      ├────────► dbt project parse validation
+      └────────► Docker runtime build verification
+                       │
+                       ▼
+                  Merge Ready
+```
+
+This catches environment, dependency, and logic problems before code reaches a running environment.
+
+---
+
+## CD — From `main` to a Running Environment
+
+Changes merged into `main` trigger the deployment workflow:
+
+```
+main ──► GitHub Actions ──► Build Image ──► GitHub Container Registry ──► AWS EC2
+```
+
+The deployed stack on EC2:
+
+| Service | Status |
+|---|---|
+| Airflow API Server | ✅ |
+| Airflow Scheduler | ✅ |
+| Airflow DAG Processor | ✅ |
+| Airflow Triggerer | ✅ |
+| Airflow Metadata PostgreSQL | ✅ |
+| Retail Warehouse PostgreSQL | ✅ healthy |
+
+AWS access uses an IAM user with scoped permissions rather than the root account.
+
+![CI/CD Success](docs/images/cicd-success.png)
+![EC2 Deployment](docs/images/ec2-deployment.png)
+
+> *The EC2 demo environment is not kept running continuously to avoid unnecessary cloud cost. The deployment is fully reproducible through the automated pipeline.*
+
+---
+
+## Containerization
+
+Docker provides a reproducible runtime for local development and cloud deployment.
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | Local development stack |
+| `docker-compose.prod.yml` | Production deployment configuration |
+| `Dockerfile.airflow` | Custom Airflow image with project dependencies |
+
+This avoids relying on manually configured application environments.
+
+---
+
+## Reliability Characteristics
+
+| Concern | Implementation |
+|---|---|
+| Duplicate batches | Processing-history check / idempotency |
+| Historical growth | Incremental dbt fact model |
+| Invalid analytical data | dbt quality gates (23 tests) |
+| Task dependency | Airflow DAG with explicit boundaries |
+| Failed transformation | Source file remains unarchived for investigation |
+| Environment consistency | Docker images |
+| Code regression | GitHub Actions CI on every PR |
+| Deployment repeatability | Automated CD to AWS EC2 |
+| Persistent database state | Docker volumes |
+| Source separation | RAW → SILVER → GOLD layering |
+
+---
+
+## Engineering Decisions
+
+**Why PostgreSQL?**
+Provides a lightweight relational warehouse suitable for reproducing the full architecture locally and on a single cloud host without requiring a paid managed service. The ingestion and transformation patterns transfer directly to Redshift, Snowflake, or BigQuery.
+
+**Why Airflow?**
+The workload has explicit dependencies, retry requirements, logging needs, and scheduled batch behavior. Airflow makes orchestration state visible rather than hiding execution inside shell scripts or cron.
+
+**Why dbt?**
+Transformation logic belongs in modular, testable, documented SQL models with explicit dependencies — not mixed into ingestion code.
+
+**Why separate RAW / SILVER / GOLD?**
+Each layer has a different contract: RAW preserves source data, SILVER standardizes and cleans, GOLD serves business-facing analytics. Mixing these responsibilities creates brittle pipelines that break when any one concern changes.
+
+**Why not Kafka or Spark?**
+The current workload does not require streaming infrastructure or distributed compute. Adding technologies without a workload requirement increases operational complexity without solving an actual problem. The "Production-Scale Extensions" section addresses where these would become appropriate.
+
+---
+
+## Production-Scale Extensions
+
+If this platform needed to grow beyond the current single-node implementation:
+
+| Category | Extension |
+|---|---|
+| **Storage** | S3 landing/archive zones, Amazon RDS or Redshift |
+| **Security** | AWS Secrets Manager / Parameter Store |
+| **Infrastructure** | Terraform-managed provisioning |
+| **Observability** | Centralized metrics, alerting, Airflow failure notifications |
+| **Data Quality** | dbt source freshness monitoring, quarantine/dead-letter workflows |
+| **Scale** | Distributed Airflow execution, larger-volume performance testing |
+| **Environments** | Dedicated staging and production separation |
+
+These are scaling decisions rather than requirements for demonstrating the current architecture.
+
+---
+
+## Repository Structure
+
+```
+retail-data-platform/
+│
+├── .github/workflows/
+│   ├── ci.yml                        # PR validation pipeline
+│   └── cd.yml                        # Deployment pipeline
+│
+├── airflow/dags/
+│   └── retail_daily_pipeline.py      # Orchestration DAG
+│
+├── ingestion/
+│   ├── database.py                   # Database connection management
+│   ├── ingest_customers.py           # Customer source loader
+│   ├── ingest_daily_orders.py        # Daily batch order ingestion
+│   ├── ingest_inventory.py           # Inventory feed loader
+│   ├── ingest_orders.py              # Order ingestion with idempotency
+│   ├── ingest_products.py            # Product catalog loader
+│   └── run_ingestion.py              # Ingestion orchestrator
+│
+├── retail_analytics/
+│   ├── models/
+│   │   ├── staging/                  # SILVER layer (stg_ models)
+│   │   └── marts/                    # GOLD layer (dim_, fct_, mart_)
+│   ├── tests/                        # Custom dbt data tests
+│   ├── macros/                       # Reusable SQL macros
+│   └── dbt_project.yml
+│
+├── landing/orders/                   # Incoming batch landing zone
+├── archive/orders/                   # Successfully processed batches
+├── failed/orders/                    # Failed batch quarantine
+│
+├── product_api/                      # Simulated product API source
+├── source_db/                        # Simulated customer database source
+├── scripts/                          # Utility scripts
+├── tests/                            # Python unit tests
+│
+├── docs/images/                      # Architecture & deployment screenshots
+│
+├── Dockerfile.airflow                # Custom Airflow runtime image
+├── docker-compose.yml                # Local development stack
+├── docker-compose.prod.yml           # Production deployment stack
+├── requirements-airflow.txt          # Airflow Python dependencies
+├── requirements.txt                  # Base Python dependencies
+├── .env.example                      # Environment variable template
+└── README.md
+```
+
+---
+
+## Run Locally
+
+**Prerequisites:** Docker and Docker Compose installed.
+
+**1. Clone**
+
+```bash
+git clone https://github.com/somesh1312/retail-data-platform.git
+cd retail-data-platform
+```
+
+**2. Configure environment**
+
+```bash
+cp .env.example .env
+# Populate local environment values. Do not commit .env.
+```
+
+**3. Build and start services**
+
+```bash
+docker compose up -d --build
+```
+
+**4. Verify services**
+
+```bash
+docker compose ps
+```
+
+**5. Trigger the pipeline**
+
+Open the Airflow UI at the configured port and trigger `retail_daily_pipeline`.
+
+---
+
+## Run dbt Independently
+
+```bash
+# Validate configuration
+dbt debug --project-dir retail_analytics --profiles-dir retail_analytics
+
+# Build and test
+dbt build --project-dir retail_analytics --profiles-dir retail_analytics
+
+# Generate and serve documentation
+dbt docs generate --project-dir retail_analytics --profiles-dir retail_analytics
+dbt docs serve --project-dir retail_analytics --profiles-dir retail_analytics
+```
+
+---
+
+## Current Status
+
+| Feature | Status |
+|---|---|
+| Multi-source ingestion | ✅ |
+| Daily batch processing | ✅ |
+| Idempotent ingestion | ✅ |
+| Incremental dbt modeling | ✅ |
+| RAW / SILVER / GOLD layers | ✅ |
+| Data-quality tests (23 passing) | ✅ |
+| Airflow orchestration | ✅ |
+| Dockerized runtime | ✅ |
+| CI validation (GitHub Actions) | ✅ |
+| Container publishing (GHCR) | ✅ |
+| CD automation | ✅ |
+| AWS EC2 deployment | ✅ |
 
 ---
 
@@ -569,4 +473,7 @@ AWS deployment         ✅
 
 **Somesh Kumar**
 
-Data Engineering • Cloud • Data Platforms
+Data Engineering · Cloud Engineering · Data Platforms
+
+<!-- TODO: Add your contact links before sending -->
+[GitHub](https://github.com/somesh1312) · [LinkedIn](https://www.linkedin.com/in/someshkumar-srihari-hemanthkumar-51b5521a5/) · [Email](mailto:somesh1st@gmail.com)
