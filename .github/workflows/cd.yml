@@ -1,32 +1,50 @@
 name: CD
 
-
 on:
+
+  # --------------------------------------------------
+  # Automatic deployment pipeline
+  #
+  # Runs when application/infrastructure code reaches
+  # main, but ignores documentation-only changes.
+  # --------------------------------------------------
 
   push:
 
     branches:
-
       - main
+
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+      - "**/*.md"
+
+
+  # --------------------------------------------------
+  # Also allow manual execution from GitHub Actions
+  # --------------------------------------------------
+
+  workflow_dispatch:
 
 
 permissions:
 
   contents: read
-
   packages: write
 
 
 env:
 
-  REGISTRY:
-    ghcr.io
+  REGISTRY: ghcr.io
 
-  IMAGE_NAME:
-    ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }}
 
 
 jobs:
+
+  # ==================================================
+  # BUILD + PUBLISH
+  # ==================================================
 
   build-and-publish:
 
@@ -38,46 +56,40 @@ jobs:
     steps:
 
       - name: Checkout repository
-
         uses: actions/checkout@v6
 
 
       - name: Log in to GitHub Container Registry
-
         uses: docker/login-action@v3
 
         with:
 
-          registry:
-            ${{ env.REGISTRY }}
+          registry: ${{ env.REGISTRY }}
 
-          username:
-            ${{ github.actor }}
+          username: ${{ github.actor }}
 
-          password:
-            ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
 
       - name: Build and push Airflow image
-
         uses: docker/build-push-action@v6
 
         with:
 
           context: .
 
-          file:
-            ./Dockerfile.airflow
+          file: ./Dockerfile.airflow
 
           push: true
 
           tags: |
-
             ghcr.io/${{ github.repository }}:latest
-
             ghcr.io/${{ github.repository }}:${{ github.sha }}
 
 
+  # ==================================================
+  # DEPLOY
+  # ==================================================
 
   deploy:
 
@@ -86,28 +98,36 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
-
       - build-and-publish
+
+
+    # ------------------------------------------------
+    # The EC2 deployment only runs when the repository
+    # variable DEPLOY_EC2_ENABLED is explicitly "true".
+    #
+    # This lets the portfolio infrastructure remain
+    # turned off without creating failed CD runs.
+    # ------------------------------------------------
+
+    if: ${{ vars.DEPLOY_EC2_ENABLED == 'true' }}
 
 
     steps:
 
       - name: Deploy over SSH
-
         uses: appleboy/ssh-action@v1
 
         with:
 
-          host:
-            ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.EC2_HOST }}
 
-          username:
-            ${{ secrets.EC2_USER }}
+          username: ${{ secrets.EC2_USER }}
 
-          key:
-            ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.EC2_SSH_KEY }}
 
           script: |
+
+            set -e
 
             cd ~/retail-data-platform
 
